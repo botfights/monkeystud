@@ -68,3 +68,19 @@ def test_make_player_subprocess():
 
     assert isinstance(player1, PlayerProcess)
     assert isinstance(player2, PlayerMemory)
+
+
+@pytest.mark.unit
+def test_player_name():
+    from monkeystud import BasePlayer
+
+    p1 = BasePlayer(1, '/foo/bar/baz/', 0, True)
+    p2 = BasePlayer(1, 'bar/baz/', 0, True)
+    p3 = BasePlayer(1, 'bar/baz', 0, True)
+    p4 = BasePlayer(1, 'baz/', 0, True)
+    p5 = BasePlayer(1, 'baz', 0, True)
+
+    players = [p1, p2, p3, p4, p5]
+
+    for player in players:
+        assert player.playername == 'baz'

@@ -160,11 +160,10 @@ class BasePlayer(object):
         self.catch_exceptions = catch_exceptions
         self.dirname = dirname
 
-        z = dirname.rfind('/')
-        if -1 != z:
-            self.playername = dirname[z + 1:]
-        else:
-            self.playername = dirname
+        if dirname.endswith('/'):
+            dirname = dirname[:-1]
+
+        self.playername = dirname.split('/')[-1]
 
     def import_bot(self):
         name = 'bot'
