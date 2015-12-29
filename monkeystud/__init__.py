@@ -169,6 +169,7 @@ class BasePlayer(object):
         name = 'bot'
         func = None
         (f, filename, data) = imp.find_module(name, [self.dirname, ])
+        m = None
         try:
             m = imp.load_module(name, f, filename, data)
         except ImportError:
