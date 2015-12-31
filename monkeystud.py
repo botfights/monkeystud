@@ -547,6 +547,11 @@ commands:
     tournament [<player1>] [<player2>] ...
 
                         play a tournament between players
+
+    verify <player>
+
+                        verify a bot
+
 options:
 
     -h, --help                      show this help
@@ -555,7 +560,6 @@ options:
     --num-games=<n>                 set number of games for tournament
     --log-level=<n>                 set log level (10 debug, 20 info, 40 error)
     --max-time=<f>                  max time relative to p_random a bot can take
-    --verify=<off|on>               verify bots before fight
 ''')
 
 
@@ -572,7 +576,6 @@ def main(argv):
                                                     "num-games=",
                                                     "log-level=",
                                                     "max-time=",
-                                                    "verify=",
                                                     ])
     except getopt.GetoptError as err:
         print(str(err))
@@ -584,7 +587,6 @@ def main(argv):
     global g_catch_exceptions
     global g_max_time
     g_catch_exceptions = False
-    verify_players = False
     for o, a in opts:
         if 0:
             pass
@@ -601,8 +603,6 @@ def main(argv):
             g_max_time = float(a)
         elif o in ("--catch-exceptions", ):
             g_catch_exceptions = 'off' != a
-        elif o in ("--verify", ):
-            verify_players = 'off' != a
         else:
             raise Exception("unhandled option")
     random.seed(seed)
@@ -629,9 +629,6 @@ def main(argv):
                         stream=sys.stdout)
         players = []
         for player_id, playername in enumerate(args):
-            if verify_players:
-                if 0 != verify_player(playername):
-                    continue
             player = make_player(chr(ord('a') + player_id), playername)
             if None == player.play:
                 continue
@@ -644,9 +641,6 @@ def main(argv):
                         stream=sys.stdout)
         players = []
         for player_id, playername in enumerate(args):
-            if verify_players:
-                if 0 != verify_player(playername):
-                    continue
             player = make_player(chr(ord('a') + player_id), playername)
             if None == player.play:
                 continue
