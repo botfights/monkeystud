@@ -3,11 +3,11 @@
 # see README.md for more dox
 
 import os, random, sys, itertools, logging, imp, time, itertools, getopt
-from multiprocessing import Process, Queue as MPQueue
-import Queue
-import click
+
 from signal import signal, SIGPIPE, SIG_DFL
 signal(SIGPIPE, SIG_DFL)
+
+MAX_TIME       = 100.0              # bot can be no more than 100x slower
 
 CHIPS_START    = 1000               # each player starts with 1000 chips
 MAX_SEATS      = 8                  # maximum seats at a table
@@ -22,6 +22,9 @@ FLUSH          = 3                  # flush
 TRIP           = 4                  # three of a kind
 STRF           = 5                  # straight flush
 
+
+g_catch_exceptions = False
+g_max_time = MAX_TIME
 
 def make_card(r, s):
     return (r << 3) | s
@@ -151,108 +154,14 @@ def best_hand_value(h):
     return best
 
 
-class BasePlayer(object):
-    def __init__(self, player_id, dirname, chips, catch_exceptions):
-        self.player_id = player_id
-        self.chips = chips
-        self.elapsed = 0.0
-        self.calls = 0
-        self.catch_exceptions = catch_exceptions
-        self.dirname = dirname
-
-        if dirname.endswith('/'):
-            dirname = dirname[:-1]
-
-        self.playername = dirname.split('/')[-1]
-
-    def import_bot(self):
-        name = 'bot'
-        func = None
-        (f, filename, data) = imp.find_module(name, [self.dirname, ])
-        m = None
-        try:
-            m = imp.load_module(name, f, filename, data)
-        except ImportError:
-            logging.error("Couldn't import bot.py from %s" % self.dirname)
-
-        if None == m or not hasattr(m, 'play'):
-            logging.error(
-                '%s has no function "play"; ignoring ...' % self.dirname
-            )
-        else:
-            func = getattr(m, 'play')
-
-        return func
-
-    def get_play(self, x):
-        return call_player(
-            self,
-            (self.player_id, self.hand, x),
-            self.catch_exceptions
-        )
+class Player():
+    pass
 
 
-    def done(self):
-        pass
-
-    def is_alive(self):
-        return True
-
-class PlayerMemory(BasePlayer):
-    def __init__(self, player_id, dirname, chips, catch_exceptions):
-        BasePlayer.__init__(self, player_id, dirname, chips, catch_exceptions)
-        self.play = self.import_bot()
-
-class PlayerProcess(BasePlayer, Process):
-    def __init__(self, player_id, dirname, chips, catch_exceptions):
-        Process.__init__(self)
-        BasePlayer.__init__(self, player_id, dirname, chips, catch_exceptions)
-
-        self.send_queue = MPQueue()
-        self.recv_queue = MPQueue()
-
-    def play(self, player_id, hand, history):
-        self.send_queue.put((player_id, hand, history))
-        result = self.recv_queue.get()
-        return result
-
-    def done(self):
-        self.send_queue.put('QUIT')
-
-    def run(self):
-        result = None
-
-        try:
-            func = self.import_bot()
-        except:
-            logging.error('caught exception "%s" loading %s' % \
-                          (sys.exc_info()[1], self.dirname))
-
-            if not self.catch_exceptions:
-                raise
-
-        if func is not None:
-            while True:
-                data = self.send_queue.get()
-                if data == "QUIT":
-                    break
-                try:
-                    result = func(*data)
-                except:
-                    logging.warn(
-                        'caught exception "%s" calling %s (%s)' % (
-                            sys.exc_info()[1], self.player_id, self.playername
-                        )
-                    )
-                    if not self.catch_exceptions:
-                        raise
-
-                self.recv_queue.put(result)
-
-def call_player(player, args, catch_exceptions):
-    start = time.clock()
+def call_player(player, args):
+    global g_catch_exceptions
     result = None
-
+    start = time.clock()
     try:
         result = player.play(*args)
     except KeyboardInterrupt:
@@ -260,7 +169,7 @@ def call_player(player, args, catch_exceptions):
     except:
         logging.warn('caught exception "%s" calling %s (%s)'
                      % (sys.exc_info()[1], player.player_id, player.playername))
-        if not catch_exceptions:
+        if not g_catch_exceptions:
             raise
     elapsed = time.clock() - start
     player.elapsed += elapsed
@@ -268,12 +177,32 @@ def call_player(player, args, catch_exceptions):
     return result
 
 
-def make_player(player_id, dirname, catch_exceptions, subprocess=True):
-    if subprocess is True:
-        p = PlayerProcess(player_id, dirname, CHIPS_START, catch_exceptions)
-        p.start()
+def make_player(player_id, dirname):
+    global g_catch_exceptions
+    m = None
+    try:
+        name = 'bot'
+        (f, filename, data) = imp.find_module(name, [dirname, ])
+        m = imp.load_module(name, f, filename, data)
+    except:
+        logging.error('caught exception "%s" loading %s' % \
+                      (sys.exc_info()[1], dirname))
+        if not g_catch_exceptions:
+            raise
+    p = Player()
+    p.player_id = player_id
+    p.playername = dirname
+    z = p.playername.rfind('/')
+    if -1 != z:
+        p.playername = p.playername[z + 1:]
+    p.play = None
+    if None == m or not hasattr(m, 'play'):
+        logging.error('%s has no function "play"; ignoring ...' % dirname)
     else:
-        p = PlayerMemory(player_id, dirname, CHIPS_START, catch_exceptions)
+        p.play = getattr(m, 'play')
+    p.elapsed = 0.0
+    p.calls = 0
+    p.get_play = lambda x: call_player(p, (p.player_id, p.hand, x))
     return p
 
 
@@ -286,10 +215,11 @@ def serialize_history(history):
     return t
 
 
-def play_hand(players, catch_exceptions, ante_amount, kibitzers=None):
+def play_hand(players, ante_amount, kibitzers = None):
     """
     play a single hand of monkeystud
     """
+
     # sit
     #
     history = []
@@ -359,6 +289,7 @@ def play_hand(players, catch_exceptions, ante_amount, kibitzers=None):
         # betting rounds
         #
         if state in (2, 3, 4):
+
             # keep asking players for their bet until
             # there's no new action
             #
@@ -369,6 +300,7 @@ def play_hand(players, catch_exceptions, ante_amount, kibitzers=None):
             action = None
             last_action = None
             while 1:
+
                 # advance the action
                 #
                 while 1:
@@ -380,7 +312,6 @@ def play_hand(players, catch_exceptions, ante_amount, kibitzers=None):
                             action = 0
                     if not players[action].folded:
                         break
-
                 if action == last_action:
                     break
 
@@ -392,7 +323,6 @@ def play_hand(players, catch_exceptions, ante_amount, kibitzers=None):
                 # get their play
                 #
                 x = players[action].get_play(serialize_history(history))
-
                 if not x in ('F', 'C', 'B'):
                     x = 'F'
                 players[action].played = True
@@ -523,14 +453,13 @@ def play_hand(players, catch_exceptions, ante_amount, kibitzers=None):
     return
 
 
-def play_game(players, catch_exceptions, kibitzers=None):
+def play_game(players, kibitzers = None):
     """
     play a game with chips, return winner
     """
     for i in players:
         i.chips = CHIPS_START
     ante_amount = 1
-
     while 1:
         t = ''
         winner = None
@@ -541,25 +470,21 @@ def play_game(players, catch_exceptions, kibitzers=None):
         logging.debug('CHIPS\t%s' % t)
         if None != winner:
             return winner
-
-        play_hand(players, catch_exceptions, ante_amount, kibitzers)
+        play_hand(players, ante_amount, kibitzers)
         ante_amount += 1
 
 
-def play_tournament(games, players, catch_exceptions):
+def play_tournament(games, players):
     """
     play many games, return map of player_id to wins
     """
     for i in players:
         i.wins = 0
-
     for i in range(games):
         kibitzers = None
         if MAX_SEATS < len(players):
             table = random.sample(players, MAX_SEATS)
-            logging.info(
-                'TABLE\t%s' % ' '.join(map(lambda x: x.playername, table))
-            )
+            logging.info('TABLE\t%s' % ' '.join(map(lambda x: x.playername, table)))
             kibitzers = []
             seated = {}
             for j in table:
@@ -569,13 +494,7 @@ def play_tournament(games, players, catch_exceptions):
                     kibitzers.append(j)
         else:
             table = players
-
-        # Start the players back up
-        for p in table:
-            if p.is_alive() is False:
-                p.start()
-
-        winner = play_game(table, catch_exceptions, kibitzers)
+        winner = play_game(table, kibitzers)
         winner.wins += 1
         t = ''
         players.sort(key = lambda x : x.wins,reverse = True)
@@ -583,26 +502,169 @@ def play_tournament(games, players, catch_exceptions):
             t += '%s:%d\t' % (j.playername, j.wins)
         logging.info('BOTFIGHT\t%d\t%d\t%s' % (i, games, t))
 
-    for i in players:
-        i.done()
 
-def verify_player(max_time, playername):
-    catch_exceptions = True
+def verify_player(playername):
+    global g_catch_exceptions
+    g_catch_exceptions = True
     logging.info('verifying %s ...' % playername)
-    p1 = make_player(1, playername, catch_exceptions)
+    p1 = make_player(1, playername)
     if None == p1.play:
         logging.info('verification FAILED. import failed.')
         return 3
-    p2 = make_player(2, 'p_random', catch_exceptions)
+    p2 = make_player(2, 'p_random')
     logging.info('playing 100 games against random ...')
-    play_tournament(100, [p1, p2], catch_exceptions)
+    play_tournament(100, [p1, p2])
     logging.info('%s: %f seconds, %d calls' % (playername, p1.elapsed, \
             p1.calls))
     logging.info('random: %f seconds, %d calls' % (p2.elapsed, p2.calls))
     factor = (p1.elapsed / p1.calls) / (p2.elapsed / p2.calls)
     logging.info('player is %.1fx slower than random' % factor)
-    if max_time < factor:
-        logging.info('verification FAILED. max_time is %.1f.' % max_time)
+    if g_max_time < factor:
+        logging.info('verification FAILED. max_time is %.1f.' % g_max_time)
         return 1
     logging.info('verification success.')
     return 0
+
+
+def usage():
+    print('''\
+monkeystud! see: http://github.com/botfights/monkeystud for dox
+
+usage:
+
+    $ python monkeystud.py <command> [<option> ...] [<arg> ...]
+
+commands:
+
+    human [<opponent1>] [<oppponent2>] ...
+
+                        play against the computer
+
+    game [<player1>] [<player2>] ...
+
+                        play a single game between players
+
+    tournament [<player1>] [<player2>] ...
+
+                        play a tournament between players
+options:
+
+    -h, --help                      show this help
+    --seed=<s>                      set seed for random number generator
+    --catch-exceptions=<off|on>     catch and log exceptions
+    --num-games=<n>                 set number of games for tournament
+    --log-level=<n>                 set log level (10 debug, 20 info, 40 error)
+    --max-time=<f>                  max time relative to p_random a bot can take
+    --verify=<off|on>               verify bots before fight
+''')
+
+
+def main(argv):
+    if 1 > len(argv):
+        usage()
+        sys.exit()
+    command = argv[0]
+    try:
+        opts, args = getopt.getopt(argv[1:], "h", [
+                                                    "help",
+                                                    "seed=",
+                                                    "catch-exceptions=",
+                                                    "num-games=",
+                                                    "log-level=",
+                                                    "max-time=",
+                                                    "verify=",
+                                                    ])
+    except getopt.GetoptError as err:
+        print(str(err))
+        usage()
+        sys.exit(1)
+    seed = time.time()
+    num_games = 1000
+    log_level = logging.DEBUG
+    global g_catch_exceptions
+    global g_max_time
+    g_catch_exceptions = False
+    verify_players = False
+    for o, a in opts:
+        if 0:
+            pass
+        elif o in ("-h", "--help"):
+            usage()
+            sys.exit()
+        elif o in ("--seed", ):
+            seed = a
+        elif o in ("--num-games", ):
+            num_games = int(a)
+        elif o in ("--log-level", ):
+            log_level = int(a)
+        elif o in ("--max-time", ):
+            g_max_time = float(a)
+        elif o in ("--catch-exceptions", ):
+            g_catch_exceptions = 'off' != a
+        elif o in ("--verify", ):
+            verify_players = 'off' != a
+        else:
+            raise Exception("unhandled option")
+    random.seed(seed)
+
+    if 0:
+        pass
+
+    elif 'human' == command:
+        logging.basicConfig(level=logging.INFO, format='%(message)s',
+                        stream=sys.stdout)
+
+
+        players = [make_player('human', 'p_human'), ]
+        if 0 == len(args):
+            players.append(make_player('computer', 'p_computer'))
+        else:
+            for i in args:
+                players.append(make_player(i, i))
+        winner = play_game(players)
+        sys.exit()
+
+    elif 'game' == command:
+        logging.basicConfig(level=log_level, format='%(message)s',
+                        stream=sys.stdout)
+        players = []
+        for player_id, playername in enumerate(args):
+            if verify_players:
+                if 0 != verify_player(playername):
+                    continue
+            player = make_player(chr(ord('a') + player_id), playername)
+            if None == player.play:
+                continue
+            players.append(player)
+        winner = play_game(players)
+        sys.exit()
+
+    elif 'tournament' == command:
+        logging.basicConfig(level=log_level, format='%(message)s',
+                        stream=sys.stdout)
+        players = []
+        for player_id, playername in enumerate(args):
+            if verify_players:
+                if 0 != verify_player(playername):
+                    continue
+            player = make_player(chr(ord('a') + player_id), playername)
+            if None == player.play:
+                continue
+            players.append(player)
+        play_tournament(num_games, players)
+        sys.exit()
+
+    elif 'verify' == command:
+        logging.basicConfig(level=logging.DEBUG, format='%(message)s',
+                        stream=sys.stdout)
+        result = verify_player(args[0])
+        sys.exit(result)
+
+    else:
+        print 'i don\'t know how to "%s".' % command
+        usage()
+        sys.exit()
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
