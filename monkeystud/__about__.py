@@ -1,0 +1,8 @@
+__title__ = 'monkeystud'
+__summary__ = 'MonkeyStud is a poker variant, suitable for computer play.'
+__uri__ = 'https://github.com/botfights/monkeystud'
+__version__ = '0.0.1.dev0'
+__author__ = 'Colin Saunders'
+__email__ = 'colinmsaunders@gmail.com'
+__license__ = ''
+__copyright__ = '2015 Colin M. Saunders'
