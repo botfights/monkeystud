@@ -41,7 +41,7 @@ class Config(object):
 )
 @click.option(
     '--subprocess', help='Run bots in subprocesses',
-    default=False,
+    default=True,
     type=bool
 )
 @click.pass_context
