@@ -221,7 +221,7 @@ class PlayerProcess(BasePlayer, Process):
 
     def run(self):
         result = None
-
+        func = None
         try:
             func = self.import_bot()
         except:
