@@ -116,7 +116,7 @@ def game(obj, competitors):
 
 @main.command()
 @click.option(
-    '--num-games', help='set number of games for tournament', default=10000,
+    '--num-games', help='set number of games for tournament', default=1000,
     type=int
 )
 @click.argument('competitors', nargs=-1, required=True)
